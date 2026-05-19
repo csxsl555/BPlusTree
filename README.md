@@ -177,6 +177,22 @@ auto basic_guard = bpm_->NewPageGuarded(&new_page_id);
 | `BPlusTreeInternalPage` | 内部节点，key 用来导航，value 是 child 的 `page_id` |
 | `BPlusTreeLeafPage` | 叶子节点，保存真正的 key/value，并通过 `next_page_id_` 串起叶子链表 |
 
+## B+ 树类定义与函数速览
+
+以下整理了 B+ 树相关的主要类与核心函数，方便快速定位接口与职责：
+
+| 类 / 结构 | 位置 | 作用与核心函数 |
+| --- | --- | --- |
+| `Context` | `src/include/storage/index/b_plus_tree.h` | 记录一次操作的 guard 与根信息；`IsRootPage(page_id)` 用于判断是否是 root。 |
+| `BPlusTree` | `src/include/storage/index/b_plus_tree.h` | 索引主体：`IsEmpty`、`GetValue`、`Insert`、`Remove`、`GetRootPageId`；迭代器 `Begin/End`；查找辅助 `BinaryFind`；调试/可视化 `Print/Draw/DrawBPlusTree`；文件批处理 `InsertFromFile/RemoveFromFile/BatchOpsFromFile`。 |
+| `PrintableBPlusTree` | `src/include/storage/index/b_plus_tree.h` | 仅用于测试与打印；`Print(std::ostream &)` 以 BFS 输出树结构。 |
+| `BPlusTreeIndex` | `src/include/storage/index/b_plus_tree_index.h` | `Index` 的 B+ 树实现：`InsertEntry`、`DeleteEntry`、`ScanKey`；迭代器 `GetBeginIterator/GetEndIterator`。 |
+| `IndexIterator` | `src/include/storage/index/index_iterator.h` | 叶子层范围扫描：`IsEnd`、`operator*`、`operator++`、`operator==/!=`。 |
+| `BPlusTreePage` | `src/include/storage/page/b_plus_tree_page.h` | 叶子/内部页公共头：`IsLeafPage`、`Get/SetSize`、`IncreaseSize`、`Get/SetMaxSize`、`GetMinSize`、`SetPageType`。 |
+| `BPlusTreeInternalPage` | `src/include/storage/page/b_plus_tree_internal_page.h` | 内部节点：`Init`、`KeyAt/SetKeyAt`、`ValueAt/SetValueAt`、`ValueIndex`、`ToString`。 |
+| `BPlusTreeLeafPage` | `src/include/storage/page/b_plus_tree_leaf_page.h` | 叶子节点：`Init`、`Get/SetNextPageId`、`KeyAt`、`ValueAt`、`SetAt`、`SetKeyAt`、`SetValueAt`、`ToString`。 |
+| `BPlusTreeHeaderPage` | `src/include/storage/page/b_plus_tree_header_page.h` | 仅保存 `root_page_id_`，用于并发环境下快速读取 root。 |
+
 ## 任务
 
 你主要需要实现 `src/storage/index/b_plus_tree.cpp` 中的函数。
