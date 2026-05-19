@@ -9,6 +9,61 @@
 
 DDL : 第 16 周周日晚，`2026 年 6 月 21 日 23:59` 
 
+# 工程架构概览
+
+本项目基于 BusTub 教学数据库，实现 B+ 树索引为主，同时保留了数据库系统的完整分层结构。入口类是
+`BustubInstance`（`src/include/common/bustub_instance.h` / `src/common/bustub_instance.cpp`），负责初始化
+磁盘、缓冲池、事务、Catalog 与执行引擎等核心组件。
+
+## 1. 运行流程（从 SQL 到磁盘）
+
+```
+SQL
+  ↓  (duckdb_pg_query / postgres_parser)
+Binder  →  Planner  →  Optimizer  →  ExecutionEngine
+  ↓                             ↓
+Catalog（表、索引、Schema）     Executor（算子）
+                                     ↓
+                          Storage（Table / Index / Page）
+                                     ↓
+                          BufferPoolManager（PageGuard）
+                                     ↓
+                          DiskManager（文件 / 内存）
+```
+
+## 2. 主要模块职责（src）
+
+- `binder/`：SQL 解析后的语义绑定，生成 bound 语句树。
+- `planner/`：将 bound 语句转为逻辑/物理计划节点。
+- `optimizer/`：规则与成本优化（含 starter rule）。
+- `execution/`：执行引擎与各类 Executor（算子）。
+- `catalog/`：表、索引、Schema 元数据管理。
+- `storage/`
+  - `disk/`：`DiskManager`，负责磁盘 IO / 文件管理。
+  - `page/`：页结构与 PageGuard 生命周期管理。
+  - `table/`：TableHeap、Tuple、Record 的存储结构。
+  - `index/`：B+ 树索引（本次 project 重点）。
+- `buffer/`：`BufferPoolManager` 与替换策略（LRU-K）。
+- `concurrency/`：锁管理、事务管理、死锁检测。
+- `recovery/`：日志与 checkpoint 相关组件。
+- `type/`：类型系统与 Value 表示。
+- `common/`：配置、异常、日志、工具函数、`BustubInstance`。
+- `container/`：可复用的数据结构组件。
+- `primer/`：教学/练习用小型示例。
+
+## 3. B+ 树相关路径
+
+- `src/include/storage/index/b_plus_tree.h`
+- `src/storage/index/b_plus_tree.cpp`
+- `src/include/storage/page/b_plus_tree_*_page.h`
+- `src/include/storage/index/index_iterator.h`
+
+## 4. 测试与工具
+
+- `test/storage/`：B+ 树相关单测与并发测试。
+- `build_support/`：构建与测试脚本。
+- `tools/`：shell、bench、打印器等辅助工具。
+
 # 基础知识
 
 在开始这个 project 之前， 我们需要了解一些基础知识。 由于课上已学习过 B 树与 B+ 树，这里没有对 B 树与 B+ 树进行介绍， 如有需要请查阅相关课程 PPT。如果你对 B+ 树进行操作后的结构有疑惑， 请在 https://www.cs.usfca.edu/~galles/visualization/BPlusTree.html 网站上进行尝试。 此外， 这个博客的动图非常生动： https://zhuanlan.zhihu.com/p/149287061。
@@ -121,6 +176,22 @@ auto basic_guard = bpm_->NewPageGuarded(&new_page_id);
 | `BPlusTreePage` | internal page 和 leaf page 的公共头部，保存 page 类型、当前 size、max size |
 | `BPlusTreeInternalPage` | 内部节点，key 用来导航，value 是 child 的 `page_id` |
 | `BPlusTreeLeafPage` | 叶子节点，保存真正的 key/value，并通过 `next_page_id_` 串起叶子链表 |
+
+## B+ 树类定义与函数速览
+
+以下整理了 B+ 树相关的主要类与核心函数，方便快速定位接口与职责：
+
+| 类 / 结构 | 位置 | 作用与核心函数 |
+| --- | --- | --- |
+| `Context` | `src/include/storage/index/b_plus_tree.h` | 记录一次操作的 guard 与根信息；`IsRootPage(page_id)` 用于判断是否是 root。 |
+| `BPlusTree` | `src/include/storage/index/b_plus_tree.h` | 索引主体：`IsEmpty`、`GetValue`、`Insert`、`Remove`、`GetRootPageId`；迭代器 `Begin/End`；查找辅助 `BinaryFind`；调试/可视化 `Print/Draw/DrawBPlusTree`；文件批处理 `InsertFromFile/RemoveFromFile/BatchOpsFromFile`。 |
+| `PrintableBPlusTree` | `src/include/storage/index/b_plus_tree.h` | 仅用于测试与打印；`Print(std::ostream &)` 以 BFS 输出树结构。 |
+| `BPlusTreeIndex` | `src/include/storage/index/b_plus_tree_index.h` | `Index` 的 B+ 树实现：`InsertEntry`、`DeleteEntry`、`ScanKey`；迭代器 `GetBeginIterator/GetEndIterator`。 |
+| `IndexIterator` | `src/include/storage/index/index_iterator.h` | 叶子层范围扫描：`IsEnd`、`operator*`、`operator++`、`operator==/!=`。 |
+| `BPlusTreePage` | `src/include/storage/page/b_plus_tree_page.h` | 叶子/内部页公共头：`IsLeafPage`、`Get/SetSize`、`IncreaseSize`、`Get/SetMaxSize`、`GetMinSize`、`SetPageType`。 |
+| `BPlusTreeInternalPage` | `src/include/storage/page/b_plus_tree_internal_page.h` | 内部节点：`Init`、`KeyAt/SetKeyAt`、`ValueAt/SetValueAt`、`ValueIndex`、`ToString`。 |
+| `BPlusTreeLeafPage` | `src/include/storage/page/b_plus_tree_leaf_page.h` | 叶子节点：`Init`、`Get/SetNextPageId`、`KeyAt`、`ValueAt`、`SetAt`、`SetKeyAt`、`SetValueAt`、`ToString`。 |
+| `BPlusTreeHeaderPage` | `src/include/storage/page/b_plus_tree_header_page.h` | 仅保存 `root_page_id_`，用于并发环境下快速读取 root。 |
 
 ## 任务
 
