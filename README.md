@@ -202,6 +202,76 @@ auto basic_guard = bpm_->NewPageGuarded(&new_page_id);
 | `src/include/storage/page/page_guard.h` | guard 管 page 访问生命周期 |
 | `src/include/buffer/buffer_pool_manager.h` | fetch/new page 的入口（通常当黑盒使用） |
 
+## 用到的类定义与函数速查
+
+### 1) `BPlusTree`（`src/include/storage/index/b_plus_tree.h`）
+
+- 作用：B+ 树对外接口与核心流程入口。
+- 关键函数：
+  - `IsEmpty()`
+  - `Insert(const KeyType &key, const ValueType &value, Transaction *txn = nullptr)`
+  - `Remove(const KeyType &key, Transaction *txn)`
+  - `GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *txn = nullptr)`
+  - `GetRootPageId()`
+  - `Begin()` / `Begin(const KeyType &key)` / `End()`
+  - `BinaryFind(const LeafPage *leaf_page, const KeyType &key)`
+  - `BinaryFind(const InternalPage *internal_page, const KeyType &key)`
+
+### 2) `Context`（`src/include/storage/index/b_plus_tree.h`）
+
+- 作用：一次 B+ 树操作过程中的 guard 与路径上下文。
+- 成员：
+  - `header_page_`
+  - `root_page_id_`
+  - `write_set_`
+  - `read_set_`
+- 辅助函数：
+  - `IsRootPage(page_id_t page_id)`
+
+### 3) `BPlusTreeHeaderPage`（`src/include/storage/page/b_plus_tree_header_page.h`）
+
+- 作用：保存整棵树的根页 id。
+- 关键字段：
+  - `root_page_id_`
+
+### 4) `BPlusTreePage`（`src/include/storage/page/b_plus_tree_page.h`）
+
+- 作用：internal / leaf 的公共页头基类。
+- 关键函数：
+  - `IsLeafPage()` / `SetPageType(IndexPageType page_type)`
+  - `GetSize()` / `SetSize(int size)` / `IncreaseSize(int amount)`
+  - `GetMaxSize()` / `SetMaxSize(int max_size)` / `GetMinSize()`
+
+### 5) `BPlusTreeInternalPage`（`src/include/storage/page/b_plus_tree_internal_page.h`）
+
+- 作用：内部节点（key 导航，value 为 child `page_id`）。
+- 关键函数：
+  - `Init(int max_size = INTERNAL_PAGE_SIZE)`
+  - `KeyAt(int index)` / `SetKeyAt(int index, const KeyType &key)`
+  - `ValueAt(int index)` / `SetValueAt(int index, const ValueType &value)`
+  - `ValueIndex(const ValueType &value)`
+  - `ToString()`
+
+### 6) `BPlusTreeLeafPage`（`src/include/storage/page/b_plus_tree_leaf_page.h`）
+
+- 作用：叶子节点（保存真正 key/value，并串联叶子链表）。
+- 关键函数：
+  - `Init(int max_size = LEAF_PAGE_SIZE)`
+  - `GetNextPageId()` / `SetNextPageId(page_id_t next_page_id)`
+  - `KeyAt(int index)` / `ValueAt(int index)`
+  - `SetAt(int index, const KeyType &key, const ValueType &value)`
+  - `SetKeyAt(int index, const KeyType &key)` / `SetValueAt(int index, const ValueType &value)`
+  - `ToString()`
+
+### 7) `IndexIterator`（`src/include/storage/index/index_iterator.h`）
+
+- 作用：范围扫描迭代器。
+- 关键函数：
+  - `IsEnd()`
+  - `operator*()`
+  - `operator++()`
+  - `operator==(...)` / `operator!=(...)`
+
 ## Context 和并发
 
 `Context` 定义在 `src/include/storage/index/b_plus_tree.h` 中，用来辅助记录一次操作过程中持有的 page guard。
