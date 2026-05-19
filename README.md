@@ -9,6 +9,61 @@
 
 DDL : 第 16 周周日晚，`2026 年 6 月 21 日 23:59` 
 
+# 工程架构概览
+
+本项目基于 BusTub 教学数据库，实现 B+ 树索引为主，同时保留了数据库系统的完整分层结构。入口类是
+`BustubInstance`（`src/include/common/bustub_instance.h` / `src/common/bustub_instance.cpp`），负责初始化
+磁盘、缓冲池、事务、Catalog 与执行引擎等核心组件。
+
+## 1. 运行流程（从 SQL 到磁盘）
+
+```
+SQL
+  ↓  (duckdb_pg_query / postgres_parser)
+Binder  →  Planner  →  Optimizer  →  ExecutionEngine
+  ↓                             ↓
+Catalog（表、索引、Schema）     Executor（算子）
+                                     ↓
+                          Storage（Table / Index / Page）
+                                     ↓
+                          BufferPoolManager（PageGuard）
+                                     ↓
+                          DiskManager（文件 / 内存）
+```
+
+## 2. 主要模块职责（src）
+
+- `binder/`：SQL 解析后的语义绑定，生成 bound 语句树。
+- `planner/`：将 bound 语句转为逻辑/物理计划节点。
+- `optimizer/`：规则与成本优化（含 starter rule）。
+- `execution/`：执行引擎与各类 Executor（算子）。
+- `catalog/`：表、索引、Schema 元数据管理。
+- `storage/`
+  - `disk/`：`DiskManager`，负责磁盘 IO / 文件管理。
+  - `page/`：页结构与 PageGuard 生命周期管理。
+  - `table/`：TableHeap、Tuple、Record 的存储结构。
+  - `index/`：B+ 树索引（本次 project 重点）。
+- `buffer/`：`BufferPoolManager` 与替换策略（LRU-K）。
+- `concurrency/`：锁管理、事务管理、死锁检测。
+- `recovery/`：日志与 checkpoint 相关组件。
+- `type/`：类型系统与 Value 表示。
+- `common/`：配置、异常、日志、工具函数、`BustubInstance`。
+- `container/`：可复用的数据结构组件。
+- `primer/`：教学/练习用小型示例。
+
+## 3. B+ 树相关路径
+
+- `src/include/storage/index/b_plus_tree.h`
+- `src/storage/index/b_plus_tree.cpp`
+- `src/include/storage/page/b_plus_tree_*_page.h`
+- `src/include/storage/index/index_iterator.h`
+
+## 4. 测试与工具
+
+- `test/storage/`：B+ 树相关单测与并发测试。
+- `build_support/`：构建与测试脚本。
+- `tools/`：shell、bench、打印器等辅助工具。
+
 # 基础知识
 
 在开始这个 project 之前， 我们需要了解一些基础知识。 由于课上已学习过 B 树与 B+ 树，这里没有对 B 树与 B+ 树进行介绍， 如有需要请查阅相关课程 PPT。如果你对 B+ 树进行操作后的结构有疑惑， 请在 https://www.cs.usfca.edu/~galles/visualization/BPlusTree.html 网站上进行尝试。 此外， 这个博客的动图非常生动： https://zhuanlan.zhihu.com/p/149287061。
