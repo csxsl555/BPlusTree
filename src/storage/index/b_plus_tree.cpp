@@ -84,7 +84,7 @@ namespace bustub {
         auto *leaf_page = reinterpret_cast<const LeafPage *>(tmp_page);
 
         int slot_num = BinaryFind(leaf_page, key);
-        if (slot_num == -1)
+        if (slot_num == -1 || comparator_(leaf_page->KeyAt(slot_num), key) != 0)
             return false;
         result->push_back(leaf_page->ValueAt(slot_num));
         return true;
@@ -104,7 +104,149 @@ namespace bustub {
     INDEX_TEMPLATE_ARGUMENTS
     auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value,
                                 Transaction *txn) -> bool {
-        // Your code here
+        if (IsEmpty()) {
+            page_id_t new_page_id;
+            auto basic_guard = bpm_->NewPageGuarded(&new_page_id);
+            auto leaf = basic_guard.template AsMut<LeafPage>();
+            leaf->Init(leaf_max_size_);
+            leaf->SetKeyAt(0, key);
+            leaf->SetValueAt(0, value);
+            leaf->IncreaseSize(1);
+
+            auto header_guard = bpm_->FetchPageWrite(header_page_id_);
+            header_guard.AsMut<BPlusTreeHeaderPage>()->root_page_id_ = new_page_id;
+            // header_guard 析构时自动 Unpin
+
+            return true;
+        }
+
+        // find leaf to insert
+
+        WritePageGuard head_guard = bpm_->FetchPageWrite(header_page_id_);
+        auto root_page_id = head_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+        std::deque<WritePageGuard> path;
+
+        path.push_back(std::move(head_guard));
+        WritePageGuard root_guard = bpm_->FetchPageWrite(root_page_id);
+        path.push_back(std::move(root_guard));
+        auto tmp_page = path.back().template AsMut<BPlusTreePage>();
+        while (!tmp_page->IsLeafPage()) {
+            auto internal = reinterpret_cast<const InternalPage *>(tmp_page);
+            int slot_num = BinaryFind(internal, key);
+            WritePageGuard child_guard = bpm_->FetchPageWrite(internal->ValueAt(slot_num));
+            path.push_back(std::move(child_guard));
+            tmp_page = path.back().template AsMut<BPlusTreePage>();
+        }
+
+        // insert leaf
+
+        auto *leaf_page = reinterpret_cast<LeafPage *>(tmp_page);
+        int slot_num = BinaryFind(leaf_page, key);
+
+        if (slot_num != -1 && comparator_(leaf_page->KeyAt(slot_num), key) == 0) {
+            return false;
+        }
+
+        int idx = slot_num + 1;
+        int old_size = leaf_page->GetSize();
+        leaf_page->IncreaseSize(1);
+
+        for (int i = old_size; i > idx; --i) {
+            leaf_page->SetKeyAt(i, leaf_page->KeyAt(i - 1));
+            leaf_page->SetValueAt(i, leaf_page->ValueAt(i - 1));
+        }
+
+        leaf_page->SetKeyAt(idx, key);
+        leaf_page->SetValueAt(idx, value);
+
+        if (old_size + 1 <= leaf_max_size_)
+            return true;
+
+        // split leaf
+
+        page_id_t new_page_id;
+        auto basic_guard = bpm_->NewPageGuarded(&new_page_id);
+        auto new_leaf = basic_guard.template AsMut<LeafPage>();
+        new_leaf->Init(leaf_max_size_);
+
+        int new_size = (old_size + 1) >> 1;
+        old_size = old_size + 1 - new_size;
+        leaf_page->SetSize(old_size);
+        new_leaf->SetSize(new_size);
+
+        for (int i = 0; i < new_size; ++i) {
+            new_leaf->SetKeyAt(i, leaf_page->KeyAt(old_size + i));
+            new_leaf->SetValueAt(i, leaf_page->ValueAt(old_size + i));
+        }
+
+        new_leaf->SetNextPageId(leaf_page->GetNextPageId());
+        leaf_page->SetNextPageId(new_page_id);
+
+        KeyType split_key = new_leaf->KeyAt(0);
+        page_id_t right_page_id = new_page_id;
+
+        path.pop_back();
+
+        while (true) {
+            if (path.size() == 1) {
+                auto header_page = path[0].AsMut<BPlusTreeHeaderPage>();
+                page_id_t old_root_id = header_page->root_page_id_;
+
+                page_id_t new_root_id;
+                auto root_guard = bpm_->NewPageGuarded(&new_root_id);
+                auto new_root = root_guard.template AsMut<InternalPage>();
+                new_root->Init(internal_max_size_);
+                new_root->SetValueAt(0, old_root_id);
+                new_root->SetKeyAt(1, split_key);
+                new_root->SetValueAt(1, right_page_id);
+                new_root->SetSize(2);
+
+                header_page->root_page_id_ = new_root_id;
+                break;
+            }
+
+            auto parent = reinterpret_cast<InternalPage *>(path.back().AsMut<BPlusTreePage>());
+
+            int insert_pos = BinaryFind(parent, split_key) + 1;
+
+            int parent_size = parent->GetSize();
+            parent->IncreaseSize(1);
+            for (int i = parent_size; i > insert_pos; --i) {
+                parent->SetKeyAt(i, parent->KeyAt(i - 1));
+                parent->SetValueAt(i, parent->ValueAt(i - 1));
+            }
+            parent->SetKeyAt(insert_pos, split_key);
+            parent->SetValueAt(insert_pos, right_page_id);
+
+            if (parent_size + 1 <= internal_max_size_) {
+                break;
+            }
+
+            // split internal page
+            page_id_t new_internal_id;
+            auto internal_guard = bpm_->NewPageGuarded(&new_internal_id);
+            auto new_internal = internal_guard.template AsMut<InternalPage>();
+            new_internal->Init(internal_max_size_);
+
+            int total = parent_size + 1;
+            int mid = total / 2;
+
+            parent->SetSize(mid);
+
+            split_key = parent->KeyAt(mid);
+
+            int right_entries = total - mid - 1;
+            new_internal->SetSize(right_entries + 1);
+            new_internal->SetValueAt(0, parent->ValueAt(mid));
+            for (int i = 1; i <= right_entries; i++) {
+                new_internal->SetKeyAt(i, parent->KeyAt(mid + i));
+                new_internal->SetValueAt(i, parent->ValueAt(mid + i));
+            }
+
+            right_page_id = new_internal_id;
+            path.pop_back();
+        }
+
         return true;
     }
 
