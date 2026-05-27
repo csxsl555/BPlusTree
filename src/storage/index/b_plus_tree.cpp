@@ -309,6 +309,27 @@ namespace bustub {
         page_id_t child_page_id = path.back().PageId();
         path.pop_back();
 
+        auto ShiftRight = [](auto *page, int size) {
+            for (int i = size; i > 0; --i) {
+                page->SetKeyAt(i, page->KeyAt(i - 1));
+                page->SetValueAt(i, page->ValueAt(i - 1));
+            }
+        };
+        auto ShiftLeft = [](auto *page, int size) {
+            for (int i = 0; i < size - 1; ++i) {
+                page->SetKeyAt(i, page->KeyAt(i + 1));
+                page->SetValueAt(i, page->ValueAt(i + 1));
+            }
+        };
+        auto RemoveFromParent = [](InternalPage *p, int idx) {
+            int sz = p->GetSize();
+            for (int i = idx; i < sz - 1; ++i) {
+                p->SetKeyAt(i, p->KeyAt(i + 1));
+                p->SetValueAt(i, p->ValueAt(i + 1));
+            }
+            p->IncreaseSize(-1);
+        };
+
         while (true) {
             if (path.size() == 1) {
                 auto header_page = path[0].AsMut<BPlusTreeHeaderPage>();
@@ -334,23 +355,19 @@ namespace bustub {
             int slot_num = BinaryFind(parent, key);
             int left_brother_num = slot_num - 1, right_brother_num = slot_num + 1;
 
-            // borrow from left
+            // borrow from left sibling
             if (left_brother_num >= 0) {
                 WritePageGuard brother_guard = bpm_->FetchPageWrite(parent->ValueAt(left_brother_num));
                 auto left_page = brother_guard.template AsMut<BPlusTreePage>();
                 if (left_page->GetSize() > left_page->GetMinSize()) {
                     WritePageGuard child_guard = bpm_->FetchPageWrite(child_page_id);
                     auto child_page = child_guard.template AsMut<BPlusTreePage>();
+                    int left_last = left_page->GetSize() - 1;
 
                     if (child_page->IsLeafPage()) {
                         auto child_leaf = reinterpret_cast<LeafPage *>(child_page);
                         auto left_leaf = reinterpret_cast<LeafPage *>(left_page);
-                        int child_sz = child_leaf->GetSize();
-                        for (int i = child_sz; i > 0; --i) {
-                            child_leaf->SetKeyAt(i, child_leaf->KeyAt(i - 1));
-                            child_leaf->SetValueAt(i, child_leaf->ValueAt(i - 1));
-                        }
-                        int left_last = left_leaf->GetSize() - 1;
+                        ShiftRight(child_leaf, child_leaf->GetSize());
                         child_leaf->SetKeyAt(0, left_leaf->KeyAt(left_last));
                         child_leaf->SetValueAt(0, left_leaf->ValueAt(left_last));
                         child_leaf->IncreaseSize(1);
@@ -359,12 +376,7 @@ namespace bustub {
                     } else {
                         auto child_internal = reinterpret_cast<InternalPage *>(child_page);
                         auto left_internal = reinterpret_cast<InternalPage *>(left_page);
-                        int child_sz = child_internal->GetSize();
-                        for (int i = child_sz; i > 0; --i) {
-                            child_internal->SetKeyAt(i, child_internal->KeyAt(i - 1));
-                            child_internal->SetValueAt(i, child_internal->ValueAt(i - 1));
-                        }
-                        int left_last = left_internal->GetSize() - 1;
+                        ShiftRight(child_internal, child_internal->GetSize());
                         child_internal->SetValueAt(0, left_internal->ValueAt(left_last));
                         child_internal->SetKeyAt(1, parent->KeyAt(slot_num));
                         child_internal->IncreaseSize(1);
@@ -375,7 +387,7 @@ namespace bustub {
                 }
             }
 
-            // borrow from right
+            // borrow from right sibling
             if (right_brother_num < parent->GetSize()) {
                 WritePageGuard brother_guard = bpm_->FetchPageWrite(parent->ValueAt(right_brother_num));
                 auto right_page = brother_guard.template AsMut<BPlusTreePage>();
@@ -390,11 +402,7 @@ namespace bustub {
                         child_leaf->SetKeyAt(child_sz, right_leaf->KeyAt(0));
                         child_leaf->SetValueAt(child_sz, right_leaf->ValueAt(0));
                         child_leaf->IncreaseSize(1);
-                        int right_sz = right_leaf->GetSize();
-                        for (int i = 0; i < right_sz - 1; ++i) {
-                            right_leaf->SetKeyAt(i, right_leaf->KeyAt(i + 1));
-                            right_leaf->SetValueAt(i, right_leaf->ValueAt(i + 1));
-                        }
+                        ShiftLeft(right_leaf, right_leaf->GetSize());
                         right_leaf->IncreaseSize(-1);
                         parent->SetKeyAt(right_brother_num, right_leaf->KeyAt(0));
                     } else {
@@ -405,18 +413,14 @@ namespace bustub {
                         child_internal->SetValueAt(child_sz, right_internal->ValueAt(0));
                         child_internal->IncreaseSize(1);
                         parent->SetKeyAt(right_brother_num, right_internal->KeyAt(1));
-                        int right_sz = right_internal->GetSize();
-                        for (int i = 0; i < right_sz - 1; ++i) {
-                            right_internal->SetKeyAt(i, right_internal->KeyAt(i + 1));
-                            right_internal->SetValueAt(i, right_internal->ValueAt(i + 1));
-                        }
+                        ShiftLeft(right_internal, right_internal->GetSize());
                         right_internal->IncreaseSize(-1);
                     }
                     break;
                 }
             }
 
-            // merge
+            // merge with a sibling
             if (left_brother_num >= 0) {
                 WritePageGuard brother_guard = bpm_->FetchPageWrite(parent->ValueAt(left_brother_num));
                 auto left_page = brother_guard.template AsMut<BPlusTreePage>();
@@ -447,13 +451,7 @@ namespace bustub {
                     }
                     left_internal->SetSize(left_sz + child_sz);
                 }
-
-                int parent_sz = parent->GetSize();
-                for (int i = slot_num; i < parent_sz - 1; ++i) {
-                    parent->SetKeyAt(i, parent->KeyAt(i + 1));
-                    parent->SetValueAt(i, parent->ValueAt(i + 1));
-                }
-                parent->IncreaseSize(-1);
+                RemoveFromParent(parent, slot_num);
             } else {
                 WritePageGuard child_guard = bpm_->FetchPageWrite(child_page_id);
                 auto child_page = child_guard.template AsMut<BPlusTreePage>();
@@ -484,13 +482,7 @@ namespace bustub {
                     }
                     child_internal->SetSize(child_sz + right_sz);
                 }
-
-                int parent_sz = parent->GetSize();
-                for (int i = right_brother_num; i < parent_sz - 1; ++i) {
-                    parent->SetKeyAt(i, parent->KeyAt(i + 1));
-                    parent->SetValueAt(i, parent->ValueAt(i + 1));
-                }
-                parent->IncreaseSize(-1);
+                RemoveFromParent(parent, right_brother_num);
             }
 
             if (parent->GetSize() >= parent->GetMinSize())
