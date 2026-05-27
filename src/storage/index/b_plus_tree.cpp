@@ -263,7 +263,47 @@ namespace bustub {
 
     INDEX_TEMPLATE_ARGUMENTS
     void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *txn) {
-        // Your code here
+        if (IsEmpty()) 
+            return;
+        
+        // find leaf to delete
+        WritePageGuard head_guard = bpm_->FetchPageWrite(header_page_id_);
+        auto root_page_id = head_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
+        std::deque<WritePageGuard> path;
+
+        path.push_back(std::move(head_guard));
+        WritePageGuard root_guard = bpm_->FetchPageWrite(root_page_id);
+        path.push_back(std::move(root_guard));
+        auto tmp_page = path.back().template AsMut<BPlusTreePage>();
+        while (!tmp_page->IsLeafPage()) {
+            auto internal = reinterpret_cast<const InternalPage *>(tmp_page);
+            int slot_num = BinaryFind(internal, key);
+            WritePageGuard child_guard = bpm_->FetchPageWrite(internal->ValueAt(slot_num));
+            path.push_back(std::move(child_guard));
+            tmp_page = path.back().template AsMut<BPlusTreePage>();
+        }
+
+        // delete leaf
+
+        auto *leaf_page = reinterpret_cast<LeafPage *>(tmp_page);
+        int slot_num = BinaryFind(leaf_page, key);
+
+        int idx = slot_num + 1;
+        int old_size = leaf_page->GetSize();
+
+        for (int i = idx; i < old_size; ++i) {
+            leaf_page->SetKeyAt(i, leaf_page->KeyAt(i + 1));
+            leaf_page->SetValueAt(i, leaf_page->ValueAt(i + 1));
+        }
+
+        leaf_page->SetSize(old_size - 1);
+        
+        if (old_size - 1 >= GetMinSize())
+            return;
+        
+        // Union
+
+        
     }
 
     /*****************************************************************************
